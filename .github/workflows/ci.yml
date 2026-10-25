@@ -6,7 +6,25 @@ on:
   pull_request:
 
 jobs:
+  version:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch base branch and tags
+        run: git fetch --tags --force origin main
+      - name: Check version
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && 'origin/main' || github.event.before }}
+        run: python tools/check_version.py --base-ref "$env:BASE_REF"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +48,7 @@ jobs:
         run: ctest --preset ${{ matrix.preset }} -E testhost --output-on-failure --timeout 60
 
   testhost:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -64,3 +83,46 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
       - name: TestHost integration
         run: ctest --preset ${{ matrix.preset }} -R testhost --output-on-failure --timeout 180
+
+  tag:
+    needs: [version, build, testhost]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate version and determine release
+        id: version
+        env:
+          BASE_REF: ${{ github.event.before }}
+        run: python3 tools/check_version.py --base-ref "$BASE_REF" --github-output "$GITHUB_OUTPUT"
+      - name: Create version tag
+        if: steps.version.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          TAG="v$CURRENT"
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            EXISTING=$(git rev-list -n 1 "refs/tags/$TAG")
+            if [ "$EXISTING" = "$GITHUB_SHA" ]; then
+              echo "Tag $TAG already points to this commit. Nothing to do."
+              exit 0
+            fi
+            echo "::error::Tag $TAG already exists on another commit"
+            exit 1
+          fi
+
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              tag -a "$TAG" "$GITHUB_SHA" -m "Release $TAG"
+
+          git push origin "refs/tags/$TAG"

@@ -248,6 +248,33 @@ ctest --preset debug -R testhost --output-on-failure
 `testhost_integration` と `testhost_integration_icons` の 2 ケースがあります。テストの登録には、設定時の `LIVESPLIT_BRIDGE_TESTHOST` と Python 3 が必要です。
 TestHost が未設定の場合はテストは登録されません。
 
+## バージョンとリリースタグ
+
+バージョンは PR 作成者が手動で決定します。Release Please、CHANGELOG 自動生成、
+GitHub Release 作成は使用しません。
+
+1. PR 作成者が `CMakeLists.txt` の `project(... VERSION ...)` と
+   `vcpkg.json` の `version-semver` を同じ `MAJOR.MINOR.PATCH` に更新します。
+   バージョンを変更しない PR では両方そのままにします。
+2. CI の `version` ジョブが形式、両ファイルの一致、base branch からの単調増加、
+   既存タグとの衝突を検証します。`build` / `testhost` は `version` 成功後に実行します。
+3. `main` にマージされ、Debug / Release のビルド・テストと TestHost 結合テストが
+   すべて成功すると、`tag` ジョブがバージョン変更時だけ `vX.Y.Z` の annotated tag を
+   作成します。既存タグは上書きしません。同じコミットへの再実行は何もしません。
+4. 最初の `v0.1.0` タグは、この構成が `main` に入った最初の CI で作成されます。
+
+ローカルで検証する場合:
+
+```powershell
+git fetch --tags
+python tools/check_version.py --base-ref origin/main
+```
+
+並行 PR の競合を避けるため、`main` の branch protection で
+`Require branches to be up to date before merging` を有効にしてください。
+`GITHUB_TOKEN` で作成したタグの push では別の workflow は起動しませんが、
+このリポジトリではタグ作成のみを目的とするため問題ありません。
+
 ## 制限
 
 - Bridge は `127.0.0.1` のみで待ち受けるため、接続先はローカル PC です。
