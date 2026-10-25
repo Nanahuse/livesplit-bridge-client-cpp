@@ -307,6 +307,19 @@ TEST_CASE("two clients can target different ports independently") {
     REQUIRE(first.get_timer_state().phase == timer_phase::RUNNING);
     REQUIRE(second.get_timer_state().phase == timer_phase::NOT_RUNNING);
 }
+TEST_CASE("responses larger than the Beast default message limit are accepted") {
+    test_support::mock_bridge_server server;
+    auto options = options_for_port(server.port());
+    options.response_timeout = 15s;
+    client bridge(options);
+    bridge.wait_until_ready(5s);
+
+    constexpr std::size_t payload_size = 17 * 1024 * 1024;
+    server.set_run_game_name(std::string(payload_size, 'x'));
+    const auto run = bridge.get_run();
+    REQUIRE(run.game_name.size() == payload_size);
+    bridge.close();
+}
 TEST_CASE("responses larger than 64 KiB are accepted and decoded") {
     fixture f;
     f.server.set_icon_bytes(70 * 1024);
@@ -363,6 +376,36 @@ TEST_CASE("initial connection retries until the Bridge appears") {
         bridge.close();
     }
 }
+TEST_CASE("zero sync_timeout is rejected") {
+    client_options options;
+    options.sync_timeout = 0ms;
+    REQUIRE_THROWS_AS(client{options}, std::invalid_argument);
+}
+
+TEST_CASE("sync_timeout also bounds the last Query response") {
+    test_support::mock_bridge_server server;
+    auto options = options_for_port(server.port());
+    options.response_timeout = 5s;
+    options.sync_timeout = 200ms;
+    client bridge(options);
+    bridge.wait_until_ready(5s);
+    server.set_behavior("get_completed_count", {.delay_ms = 700});
+
+    const auto started = std::chrono::steady_clock::now();
+    auto future = bridge.synchronize_async();
+    std::optional<error_kind> failure_kind;
+    try {
+        (void)future.get();
+    } catch (const error& failure) {
+        failure_kind = failure.kind();
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    REQUIRE(failure_kind == error_kind::timeout);
+    REQUIRE(elapsed < 500ms);
+    bridge.close();
+}
+
 TEST_CASE("operations time out while no Bridge is available") {
     std::uint16_t port = 0;
     {

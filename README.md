@@ -138,7 +138,8 @@ const decoded_run_icons decoded = decode_run_icons(wire);
   呼び出し元をブロックしません。同期版はその便利ラッパーです。
 - Event は同期中も検証・配送を継続します。同期中に Event が届いた場合は変更された
   状態だけを再取得し、古い Snapshot で Ready にならないようにします。
-- `sync_timeout` 内に状態が安定しない場合は `unstable_state` として中断し、再接続します。
+- `sync_timeout` 内に同期が完了しない場合は `timeout`、状態が安定しない場合は
+  `unstable_state` として中断し、再接続します。
 
 ### 再接続・再同期
 
@@ -251,6 +252,8 @@ TestHost が未設定の場合はテストは登録されません。
 
 - Bridge は `127.0.0.1` のみで待ち受けるため、接続先はローカル PC です。
 - 現時点では `ws://` のみ対応し、TLS は使用しません。
+- WebSocket メッセージの受信上限は 64 MiB です。Bridge 側の Response には 64 KiB の
+  制限はありませんが、クライアントは 64 MiB を超えるメッセージを拒否します。
 - 同期 API と `std::future` ベースの非同期 API を提供します。非同期操作も 1 本の
   ワーカースレッドで直列に処理されます。
 - 1 クライアントインスタンスは 1 つの Bridge ポートに接続します。複数接続先は

@@ -129,7 +129,8 @@ constexpr std::uint8_t sync_all_parts =
 client_impl::client_impl(client_options options)
     : options_(std::move(options)),
       work_guard_(boost::asio::make_work_guard(io_)),
-      reconnect_timer_(io_) {
+      reconnect_timer_(io_),
+      sync_timer_(io_) {
     if (options_.host.empty()) {
         throw std::invalid_argument("client_options.host must not be empty");
     }
@@ -150,6 +151,9 @@ client_impl::client_impl(client_options options)
     }
     if (options_.ready_timeout < std::chrono::milliseconds::zero()) {
         throw std::invalid_argument("client_options.ready_timeout must be non-negative");
+    }
+    if (options_.sync_timeout <= std::chrono::milliseconds::zero()) {
+        throw std::invalid_argument("client_options.sync_timeout must be positive");
     }
     if (options_.reconnect_initial_delay < std::chrono::milliseconds::zero() ||
         options_.reconnect_max_delay < options_.reconnect_initial_delay) {
@@ -280,6 +284,7 @@ void client_impl::clear_events() {
 
 void client_impl::shutdown() {
     io_stopping_ = true;
+    sync_timer_.cancel();
     const error stopped(error_kind::closed, "LiveSplit.Bridge client is closed");
 
     auto request = pending_;
@@ -483,6 +488,8 @@ void client_impl::connect_endpoint(
                                     return;
                                 }
                                 connection->established = true;
+                                connection->websocket_stream.read_message_max(
+                                    connection_base::max_message_bytes);
                                 if (connection->deadline) connection->deadline->cancel();
                                 boost::beast::get_lowest_layer(connection->websocket_stream)
                                     .expires_never();
@@ -565,6 +572,7 @@ void client_impl::handle_event_text(const std::string& text) {
     } catch (const std::exception&) {
         if (current_ && current_->type == operation::kind::synchronize) {
             sync_dirty_parts_ |= sync_all_parts;
+            sync_saw_events_ = true;
             event_baseline_reset_ = true;
             last_event_sequence_.reset();
         } else {
@@ -600,6 +608,7 @@ void client_impl::handle_event_text(const std::string& text) {
         if (sequence != expected) {
             if (current_ && current_->type == operation::kind::synchronize) {
                 sync_dirty_parts_ |= sync_all_parts;
+                sync_saw_events_ = true;
                 event_baseline_reset_ = true;
                 last_event_sequence_.reset();
             } else {
@@ -611,6 +620,7 @@ void client_impl::handle_event_text(const std::string& text) {
     last_event_sequence_ = sequence;
 
     const bool syncing = current_ && current_->type == operation::kind::synchronize;
+    if (syncing) sync_saw_events_ = true;
     const bool timer_query_in_flight = pending_ &&
         pending_->kind == operation::kind::synchronize &&
         sync_method_ == query_method::GET_TIMER_STATE;
@@ -990,7 +1000,23 @@ void client_impl::start_sync(const std::shared_ptr<operation>& op) {
     sync_queue_.clear();
     for (const auto method : sync_queries) sync_queue_.push_back(method);
     sync_dirty_parts_ = 0;
+    sync_saw_events_ = false;
+    sync_timer_.cancel();
     sync_deadline_ = std::chrono::steady_clock::now() + options_.sync_timeout;
+    sync_timer_.expires_at(sync_deadline_);
+    sync_timer_.async_wait([self = shared_from_this()](const boost::system::error_code& ec) {
+        if (ec || self->closed_ || self->io_stopping_) return;
+        if (!self->current_ || self->current_->type != operation::kind::synchronize) return;
+        const auto kind = self->sync_saw_events_
+            ? error_kind::unstable_state
+            : error_kind::timeout;
+        self->sync_queue_.clear();
+        self->sync_dirty_parts_ = 0;
+        self->fail_sync(
+            self->current_,
+            error(kind, "synchronization exceeded sync_timeout"));
+        self->begin_reconnect("synchronization timed out");
+    });
     sync_needed_ = false;
     set_state(connection_state::synchronizing);
     send_next_sync_query(op);
@@ -1010,7 +1036,11 @@ void client_impl::send_next_sync_query(const std::shared_ptr<operation>& op) {
     if (std::chrono::steady_clock::now() >= sync_deadline_) {
         sync_queue_.clear();
         sync_dirty_parts_ = 0;
-        fail_sync(op, error(error_kind::timeout, "synchronization timed out"));
+        fail_sync(
+            op,
+            error(
+                sync_saw_events_ ? error_kind::unstable_state : error_kind::timeout,
+                "synchronization timed out"));
         begin_reconnect("synchronization timed out");
         return;
     }
@@ -1076,6 +1106,7 @@ void client_impl::finish_sync(const std::shared_ptr<operation>& op) {
         return;
     }
 
+    sync_timer_.cancel();
     sync_snapshot_.session_id = sync_session_;
     known_session_ = sync_session_;
     publish_session(sync_session_);
@@ -1097,6 +1128,7 @@ void client_impl::finish_sync(const std::shared_ptr<operation>& op) {
 }
 
 void client_impl::fail_sync(const std::shared_ptr<operation>& op, const error& failure) {
+    sync_timer_.cancel();
     if (!op || op->completed) return;
     op->completed = true;
     if (op->on_error) {
@@ -1110,6 +1142,7 @@ void client_impl::fail_sync(const std::shared_ptr<operation>& op, const error& f
 
 void client_impl::fail_operation(const std::shared_ptr<operation>& op, const error& failure) {
     if (!op || op->completed) return;
+    if (op->type == operation::kind::synchronize) sync_timer_.cancel();
     op->completed = true;
     if (op->queue_timer) op->queue_timer->cancel();
     if (op->on_error) {

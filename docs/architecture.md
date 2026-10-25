@@ -62,8 +62,8 @@ connecting ──> synchronizing ──> ready
 Event の再同期では `event_sequence` の基準を解除し、再同期完了後の最初の Event を
 新しい基準にします。再同期中も Event は破棄せず、検証・配送を継続します。同期中に
 Event が届いた場合は、その Event を配送したうえで変更された状態だけを再取得します。
-`sync_timeout` 内に同期が安定しない場合は `error_kind::unstable_state` で中断し、
-バックオフ付きで再接続します。
+`sync_timeout` 内に同期が完了しない場合は `error_kind::timeout`、状態が安定しない
+場合は `error_kind::unstable_state` で中断し、バックオフ付きで再接続します。
 
 ## Control の結果不明
 
@@ -83,7 +83,8 @@ Control は Query と異なり、再送すると二重実行になります。�
 - Query / Control / `synchronize` は同期版と `_async()` 版を持ちます。非同期版は
   operation queue へ積んで `std::future` を返します。
 - `response_timeout`: RPC を送信してから Response を受信するまでの時間。
-- `sync_timeout`: 1 回の同期処理全体の上限。Event が続いて安定しない場合は
+- `sync_timeout`: 1 回の同期処理全体の上限。完了しない場合は
+  `error_kind::timeout`、Event が続いて安定しない場合は
   `error_kind::unstable_state` になります。
 - `ready_timeout`: operation queue に入ってから実行開始までの時間。接続・再同期を
   待つ上限でもあります。
@@ -96,5 +97,5 @@ Control は Query と異なり、再送すると二重実行になります。�
   enum、整数範囲、nullable、`const` を検証します。Schema 本体は Git に保存せず、
   固定 revision から生成時に取得します。
 - JSON は 1 つの Text Message として送受信します。Response に 64 KiB の制限はなく、
-  クライアントの読み取りバッファ上限は 64 MiB です。
+  クライアントの `read_message_max` と読み取りバッファ上限は 64 MiB です。
 - Event は `std::variant<timer_event, reset_event, changed_event>` で表現します。

@@ -76,8 +76,9 @@ private:
         explicit connection_base(boost::asio::io_context& io)
             : websocket_stream(io) {}
 
+        static constexpr std::size_t max_message_bytes = 64 * 1024 * 1024;
         websocket websocket_stream;
-        boost::beast::flat_buffer buffer{64 * 1024 * 1024};
+        boost::beast::flat_buffer buffer{max_message_bytes};
         std::shared_ptr<boost::asio::steady_timer> deadline;
         std::shared_ptr<tcp::resolver> resolver;
         bool closed{false};
@@ -173,6 +174,7 @@ private:
     boost::asio::io_context io_;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard_;
     boost::asio::steady_timer reconnect_timer_;
+    boost::asio::steady_timer sync_timer_;
     std::thread thread_;
     std::atomic<bool> closed_{false};
     std::once_flag close_once_;
@@ -214,6 +216,7 @@ private:
     std::deque<query_method> sync_queue_;
     query_method sync_method_{};
     std::uint8_t sync_dirty_parts_{0};
+    bool sync_saw_events_{false};
     std::chrono::steady_clock::time_point sync_deadline_{};
     snapshot sync_snapshot_;
     std::uint64_t dropped_event_count_{0};
