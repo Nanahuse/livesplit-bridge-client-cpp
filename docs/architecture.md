@@ -18,7 +18,8 @@ public next_event <── condition variable ── event queue
 - RPC は 1 件ずつ送信し、`request_id` の照合と要求 method に対する結果型の検証を
   行います。Request ID は `uint32` で `4294967295` の次は `0` です。
 - Events は読み取りループで検証・sequence 管理を行い、`next_event()` 用のキューへ
-  入れます。キューは上限 4096 件で、超過時は古いものから破棄します。
+  入れます。キューは上限 4096 件で、超過時は古いものから破棄し、
+  `dropped_event_count()` を増やします。
 
 ## 状態
 
@@ -31,10 +32,13 @@ connecting ──> synchronizing ──> ready
 
 - 初回は Events、RPC の順に接続し、その後に 5 つの Query を実行して同期します。
   `get_run_icons` はサイズが大きいため同期に含めず、要求時だけ取得します。
-- `ready` の間は Query / Control / Event 受信が可能です。
+- `ready` の間は Query / Control / Event 受信が可能です。同期中も Event の検証・
+  配送を継続します。
+- 同期中に Event が届いた場合は `sync_dirty_` を立て、現在の Query 列が完了した後に
+  全 Query をやり直します。古い Snapshot のまま `ready` にしません。
 - 再接続中と同期中は `current_snapshot()` が `not_ready` になります。
-- `close()` はワーカースレッドを停止し、待機中の future と `next_event()` を
-  `closed` で解放します。
+- `close()` はワーカースレッドを停止し、待機中の future と `next_event()` を解放します。
+  送信済み Control が残っている場合は `control_result_unknown` として終了します。
 
 ## 復旧
 
@@ -52,8 +56,8 @@ connecting ──> synchronizing ──> ready
 `reconnect_max_delay` です。同期成功時にバックオフをリセットします。
 
 Event の再同期では `event_sequence` の基準を解除し、再同期完了後の最初の Event を
-新しい基準にします。再同期中に到着した Event は破棄しますが、既にキューにある
-検証済み Event は保持します。
+新しい基準にします。再同期中も Event は破棄せず、検証・配送を継続します。同期中に
+Event が届いた場合は、その Event を配送したうえで Query をやり直します。
 
 ## Control の結果不明
 
@@ -63,12 +67,15 @@ Control は Query と異なり、再送すると二重実行になります。�
 - Response のタイムアウト
 - 送信開始後の RPC 切断
 - Control に対する不正な Response
+- 送信済み Control を残したまま `close()` した場合
 
 呼び出し側は再接続・再同期後に `get_timer_state()` などで結果を確認します。
 再接続自体は Control を再送しません。
 
 ## 公開 API の待機時間
 
+- Query / Control / `synchronize` は同期版と `_async()` 版を持ちます。非同期版は
+  operation queue へ積んで `std::future` を返します。
 - `response_timeout`: RPC を送信してから Response を受信するまでの時間。
 - `ready_timeout`: operation queue に入ってから実行開始までの時間。接続・再同期を
   待つ上限でもあります。
@@ -78,7 +85,8 @@ Control は Query と異なり、再送すると二重実行になります。�
 ## モデルと検証
 
 - 公式 Schema から生成した `protocol.hpp` が wire の必須・未知・重複プロパティ、
-  enum、整数範囲、nullable、`const` を検証します。
+  enum、整数範囲、nullable、`const` を検証します。Schema 本体は Git に保存せず、
+  固定 revision から生成時に取得します。
 - JSON は 1 つの Text Message として送受信します。Response に 64 KiB の制限はなく、
   クライアントの読み取りバッファ上限は 64 MiB です。
 - Event は `std::variant<timer_event, reset_event, changed_event>` で表現します。

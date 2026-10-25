@@ -40,19 +40,30 @@ public:
     [[nodiscard]] connection_state state() const;
     [[nodiscard]] bool wait_until_ready(std::chrono::milliseconds timeout) const;
     [[nodiscard]] std::uint32_t session_id() const;
+    [[nodiscard]] std::uint64_t dropped_event_count() const;
     [[nodiscard]] snapshot current_snapshot() const;
 
     [[nodiscard]] snapshot synchronize();
+    [[nodiscard]] std::future<snapshot> synchronize_async();
     [[nodiscard]] timer_state get_timer_state();
+    [[nodiscard]] std::future<timer_state> get_timer_state_async();
     [[nodiscard]] run_state get_run();
+    [[nodiscard]] std::future<run_state> get_run_async();
     [[nodiscard]] run_icons get_run_icons();
+    [[nodiscard]] std::future<run_icons> get_run_icons_async();
     [[nodiscard]] attempt_state get_attempt();
+    [[nodiscard]] std::future<attempt_state> get_attempt_async();
     [[nodiscard]] context_state get_context_state();
+    [[nodiscard]] std::future<context_state> get_context_state_async();
     [[nodiscard]] completed_count_value get_completed_count();
+    [[nodiscard]] std::future<completed_count_value> get_completed_count_async();
 
     void timer_control(timer_operation operation);
+    [[nodiscard]] std::future<void> timer_control_async(timer_operation operation);
     void game_control(game_control_operation operation);
+    [[nodiscard]] std::future<void> game_control_async(game_control_operation operation);
     void set_game_time(std::int64_t ticks);
+    [[nodiscard]] std::future<void> set_game_time_async(std::int64_t ticks);
 
     [[nodiscard]] std::optional<bridge_event> next_event(std::chrono::milliseconds timeout);
     [[nodiscard]] bridge_event wait_for_event();
@@ -83,11 +94,11 @@ private:
         bool game_time{false};
         bool game_set{false};
         std::int64_t ticks{0};
-        bool pause_events{false};
         bool started{false};
         bool completed{false};
-        std::shared_ptr<std::promise<rpc_response>> response;
-        std::shared_ptr<std::promise<snapshot>> sync;
+        std::function<void(const rpc_response&)> on_response;
+        std::function<void(const snapshot&)> on_sync;
+        std::function<void(const error&)> on_error;
         std::shared_ptr<boost::asio::steady_timer> queue_timer;
     };
 
@@ -182,7 +193,7 @@ private:
     bool sync_needed_{true};
     bool reconnect_when_idle_{false};
     bool ever_ready_{false};
-    bool event_paused_{true};
+    bool sync_dirty_{false};
     bool event_baseline_reset_{true};
 
     std::chrono::milliseconds next_reconnect_delay_{0};
@@ -200,6 +211,7 @@ private:
     std::uint32_t sync_session_{0};
     int sync_step_{0};
     snapshot sync_snapshot_;
+    std::uint64_t dropped_event_count_{0};
 };
 
 }  // namespace livesplit::bridge::detail

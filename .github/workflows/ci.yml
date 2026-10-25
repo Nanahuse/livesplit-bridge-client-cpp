@@ -7,6 +7,10 @@ on:
 
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [debug, release]
     runs-on: windows-latest
     env:
       VCPKG_ROOT: C:\vcpkg
@@ -19,13 +23,17 @@ jobs:
         run: python tools/generate_models.py --check
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Configure
-        run: cmake --preset debug
+        run: cmake --preset ${{ matrix.preset }}
       - name: Build
-        run: cmake --build --preset debug
+        run: cmake --build --preset ${{ matrix.preset }}
       - name: Test
-        run: ctest --preset debug -E testhost --output-on-failure --timeout 60
+        run: ctest --preset ${{ matrix.preset }} -E testhost --output-on-failure --timeout 60
 
   testhost:
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [debug, release]
     runs-on: windows-latest
     env:
       VCPKG_ROOT: C:\vcpkg
@@ -51,8 +59,8 @@ jobs:
           "LIVESPLIT_BRIDGE_TESTHOST=$env:GITHUB_WORKSPACE\.testhost\LiveSplit.Bridge\tests\LiveSplit.Bridge.TestHost\bin\Release\net4.8.1\LiveSplit.Bridge.TestHost.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Configure
-        run: cmake --preset debug
+        run: cmake --preset ${{ matrix.preset }}
       - name: Build
-        run: cmake --build --preset debug
+        run: cmake --build --preset ${{ matrix.preset }}
       - name: TestHost integration
-        run: ctest --preset debug -R testhost --output-on-failure --timeout 180
+        run: ctest --preset ${{ matrix.preset }} -R testhost --output-on-failure --timeout 180

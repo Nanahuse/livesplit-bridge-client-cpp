@@ -92,26 +92,6 @@ constexpr auto sync_queries = std::array{
     return "unknown";
 }
 
-void set_promise_exception(
-    const std::shared_ptr<std::promise<rpc_response>>& promise,
-    const error& failure) {
-    if (!promise) return;
-    try {
-        promise->set_exception(std::make_exception_ptr(failure));
-    } catch (const std::future_error&) {
-    }
-}
-
-void set_promise_exception(
-    const std::shared_ptr<std::promise<snapshot>>& promise,
-    const error& failure) {
-    if (!promise) return;
-    try {
-        promise->set_exception(std::make_exception_ptr(failure));
-    } catch (const std::future_error&) {
-    }
-}
-
 }  // namespace
 
 client_impl::client_impl(client_options options)
@@ -207,6 +187,11 @@ std::uint32_t client_impl::session_id() const {
     return public_session_id_;
 }
 
+std::uint64_t client_impl::dropped_event_count() const {
+    std::lock_guard lock(mutex_);
+    return dropped_event_count_;
+}
+
 snapshot client_impl::current_snapshot() const {
     std::lock_guard lock(mutex_);
     if (public_closed_) {
@@ -248,6 +233,7 @@ void client_impl::push_event(bridge_event event) {
         constexpr std::size_t maximum_events = 4096;
         while (events_.size() > maximum_events) {
             events_.pop_front();
+            ++dropped_event_count_;
         }
     }
     event_cv_.notify_one();
@@ -264,11 +250,21 @@ void client_impl::shutdown() {
     io_stopping_ = true;
     const error stopped(error_kind::closed, "LiveSplit.Bridge client is closed");
 
-    if (pending_) {
-        if (pending_->timer) pending_->timer->cancel();
-        pending_.reset();
+    auto request = pending_;
+    pending_.reset();
+    if (request && request->timer) request->timer->cancel();
+    if (current_) {
+        if (request && request->kind == operation::kind::control && request->write_started) {
+            fail_operation(
+                current_,
+                error(
+                    error_kind::control_result_unknown,
+                    "client closed after sending a control; the result is unknown and was not retried",
+                    request->id));
+        } else {
+            fail_operation(current_, stopped);
+        }
     }
-    if (current_) fail_operation(current_, stopped);
     while (!queue_.empty()) {
         auto op = queue_.front();
         queue_.pop_front();
@@ -302,7 +298,6 @@ void client_impl::close_connections() {
 }
 
 void client_impl::reset_event_stream(bool clear_queued_events) {
-    event_paused_ = true;
     event_baseline_reset_ = true;
     event_session_.reset();
     last_event_sequence_.reset();
@@ -530,13 +525,19 @@ void client_impl::start_rpc_read(const std::shared_ptr<connection_base>& connect
 }
 
 void client_impl::handle_event_text(const std::string& text) {
-    if (closed_ || io_stopping_ || event_paused_) return;
+    if (closed_ || io_stopping_) return;
 
     bridge_event event;
     try {
         event = parse_bridge_event(text);
     } catch (const std::exception&) {
-        begin_resync("Bridge returned a malformed event");
+        if (current_ && current_->type == operation::kind::synchronize) {
+            sync_dirty_ = true;
+            event_baseline_reset_ = true;
+            last_event_sequence_.reset();
+        } else {
+            begin_resync("Bridge returned a malformed event");
+        }
         return;
     }
 
@@ -565,11 +566,20 @@ void client_impl::handle_event_text(const std::string& text) {
             ? 1u
             : *last_event_sequence_ + 1u;
         if (sequence != expected) {
-            begin_resync("Events sequence gap");
+            if (current_ && current_->type == operation::kind::synchronize) {
+                sync_dirty_ = true;
+                event_baseline_reset_ = true;
+                last_event_sequence_.reset();
+            } else {
+                begin_resync("Events sequence gap");
+            }
             return;
         }
     }
     last_event_sequence_ = sequence;
+    if (current_ && current_->type == operation::kind::synchronize) {
+        sync_dirty_ = true;
+    }
 
     std::optional<timer_state> timer_update;
     std::visit(
@@ -583,7 +593,7 @@ void client_impl::handle_event_text(const std::string& text) {
         },
         event);
 
-    if (timer_update) {
+    if (timer_update && ready_) {
         std::lock_guard lock(mutex_);
         if (public_snapshot_ && public_snapshot_->session_id == session_id) {
             public_snapshot_->timer = *timer_update;
@@ -751,10 +761,16 @@ void client_impl::handle_sync_response(
 
 void client_impl::begin_resync(std::string reason) {
     (void)reason;
-    if (closed_ || io_stopping_ || connecting_ || connect_scheduled_ || sync_needed_) return;
+    if (closed_ || io_stopping_ || connecting_ || connect_scheduled_) return;
+    if (current_ && current_->type == operation::kind::synchronize) {
+        sync_dirty_ = true;
+        event_baseline_reset_ = true;
+        last_event_sequence_.reset();
+        return;
+    }
+    if (sync_needed_) return;
     ready_ = false;
     sync_needed_ = true;
-    event_paused_ = true;
     event_baseline_reset_ = true;
     last_event_sequence_.reset();
     set_state(connection_state::synchronizing);
@@ -762,12 +778,10 @@ void client_impl::begin_resync(std::string reason) {
 }
 
 void client_impl::begin_reconnect(std::string reason) {
-    (void)reason;
     if (closed_ || io_stopping_) return;
     if (connecting_ || connect_scheduled_) {
         ready_ = false;
         sync_needed_ = true;
-        event_paused_ = true;
         if (!connect_scheduled_) {
             close_connections();
             connecting_ = false;
@@ -777,11 +791,16 @@ void client_impl::begin_reconnect(std::string reason) {
     }
     ready_ = false;
     sync_needed_ = true;
-    event_paused_ = true;
     set_state(connection_state::reconnecting);
     if (current_) {
-        reconnect_when_idle_ = true;
-        return;
+        if (current_->type == operation::kind::synchronize) {
+            fail_current(error(
+                error_kind::connection_lost,
+                reason.empty() ? "reconnect required during synchronization" : reason));
+        } else {
+            reconnect_when_idle_ = true;
+            return;
+        }
     }
     perform_reconnect();
 }
@@ -825,7 +844,6 @@ void client_impl::pump() {
     if (sync_needed_) {
         auto op = std::make_shared<operation>();
         op->type = operation::kind::synchronize;
-        op->pause_events = true;
         current_ = op;
         start_sync(op);
         return;
@@ -900,14 +918,19 @@ void client_impl::start_sync(const std::shared_ptr<operation>& op) {
     sync_step_ = 0;
     sync_snapshot_ = {};
     sync_needed_ = false;
-    event_paused_ = true;
+    sync_dirty_ = false;
     set_state(connection_state::synchronizing);
     send_next_sync_query(op);
 }
 
 void client_impl::send_next_sync_query(const std::shared_ptr<operation>& op) {
     if (sync_step_ >= static_cast<int>(sync_queries.size())) {
-        finish_sync(op);
+        // Let already-queued Event handlers run before deciding that the pass is
+        // clean. This narrows the window in which a change can be observed after
+        // the last Query but before Ready.
+        boost::asio::post(io_, [self = shared_from_this(), op] {
+            if (!self->closed_ && !self->io_stopping_) self->finish_sync(op);
+        });
         return;
     }
 
@@ -925,7 +948,8 @@ void client_impl::send_next_sync_query(const std::shared_ptr<operation>& op) {
 }
 
 void client_impl::finish_sync(const std::shared_ptr<operation>& op) {
-    if (!op || sync_session_ == 0) {
+    if (!op || op->completed || current_ != op) return;
+    if (sync_session_ == 0) {
         fail_sync(op, error(error_kind::internal_error, "synchronization did not complete"));
         begin_reconnect("synchronization did not complete");
         return;
@@ -935,22 +959,27 @@ void client_impl::finish_sync(const std::shared_ptr<operation>& op) {
         begin_reconnect("Events and RPC sessions differ");
         return;
     }
+    if (sync_dirty_) {
+        sync_dirty_ = false;
+        sync_session_ = 0;
+        sync_step_ = 0;
+        sync_snapshot_ = {};
+        send_next_sync_query(op);
+        return;
+    }
 
     sync_snapshot_.session_id = sync_session_;
     known_session_ = sync_session_;
     publish_session(sync_session_);
     publish_snapshot(sync_snapshot_);
     ready_ = true;
-    event_paused_ = false;
-    event_baseline_reset_ = true;
-    last_event_sequence_.reset();
     next_reconnect_delay_ = std::chrono::milliseconds::zero();
     ever_ready_ = true;
     set_state(connection_state::ready);
 
-    if (op->sync) {
+    if (op->on_sync) {
         try {
-            op->sync->set_value(sync_snapshot_);
+            op->on_sync(sync_snapshot_);
         } catch (const std::future_error&) {
         }
     }
@@ -962,7 +991,12 @@ void client_impl::finish_sync(const std::shared_ptr<operation>& op) {
 void client_impl::fail_sync(const std::shared_ptr<operation>& op, const error& failure) {
     if (!op || op->completed) return;
     op->completed = true;
-    set_promise_exception(op->sync, failure);
+    if (op->on_error) {
+        try {
+            op->on_error(failure);
+        } catch (const std::future_error&) {
+        }
+    }
     if (current_ == op) current_.reset();
 }
 
@@ -970,8 +1004,12 @@ void client_impl::fail_operation(const std::shared_ptr<operation>& op, const err
     if (!op || op->completed) return;
     op->completed = true;
     if (op->queue_timer) op->queue_timer->cancel();
-    set_promise_exception(op->response, failure);
-    set_promise_exception(op->sync, failure);
+    if (op->on_error) {
+        try {
+            op->on_error(failure);
+        } catch (const std::future_error&) {
+        }
+    }
     if (current_ == op) current_.reset();
 }
 
@@ -984,9 +1022,9 @@ void client_impl::complete_operation(const std::shared_ptr<operation>& op, const
     if (!op || op->completed) return;
     op->completed = true;
     if (op->queue_timer) op->queue_timer->cancel();
-    if (op->response) {
+    if (op->on_response) {
         try {
-            op->response->set_value(response);
+            op->on_response(response);
         } catch (const std::future_error&) {
         }
     }
@@ -1152,129 +1190,213 @@ void client_impl::on_rpc_protocol_failure(std::string message) {
     begin_reconnect("RPC protocol violation");
 }
 
-snapshot client_impl::synchronize() {
+std::future<snapshot> client_impl::synchronize_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::synchronize;
-    op->pause_events = true;
-    op->sync = std::make_shared<std::promise<snapshot>>();
-    auto future = op->sync->get_future();
+    auto promise = std::make_shared<std::promise<snapshot>>();
+    auto future = promise->get_future();
+    op->on_sync = [promise](const snapshot& state) { promise->set_value(state); };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    return future.get();
+    return future;
 }
 
+snapshot client_impl::synchronize() {
+    return synchronize_async().get();
+}
 
-timer_state client_impl::get_timer_state() {
+std::future<timer_state> client_impl::get_timer_state_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::query;
     op->query = query_method::GET_TIMER_STATE;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<timer_state>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        promise->set_value(std::get<timer_state_response>(response).result);
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (const auto* value = std::get_if<timer_state_response>(&response)) return value->result;
-    throw error(error_kind::internal_error, "unexpected response for get_timer_state");
+    return future;
 }
 
-run_state client_impl::get_run() {
+timer_state client_impl::get_timer_state() {
+    return get_timer_state_async().get();
+}
+
+std::future<run_state> client_impl::get_run_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::query;
     op->query = query_method::GET_RUN;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<run_state>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        promise->set_value(std::get<run_state_response>(response).result);
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (const auto* value = std::get_if<run_state_response>(&response)) return value->result;
-    throw error(error_kind::internal_error, "unexpected response for get_run");
+    return future;
 }
 
-run_icons client_impl::get_run_icons() {
+run_state client_impl::get_run() {
+    return get_run_async().get();
+}
+
+std::future<run_icons> client_impl::get_run_icons_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::query;
     op->query = query_method::GET_RUN_ICONS;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<run_icons>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        promise->set_value(std::get<run_icons_response>(response).result);
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (const auto* value = std::get_if<run_icons_response>(&response)) return value->result;
-    throw error(error_kind::internal_error, "unexpected response for get_run_icons");
+    return future;
 }
 
-attempt_state client_impl::get_attempt() {
+run_icons client_impl::get_run_icons() {
+    return get_run_icons_async().get();
+}
+
+std::future<attempt_state> client_impl::get_attempt_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::query;
     op->query = query_method::GET_ATTEMPT;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<attempt_state>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        promise->set_value(std::get<attempt_state_response>(response).result);
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (const auto* value = std::get_if<attempt_state_response>(&response)) return value->result;
-    throw error(error_kind::internal_error, "unexpected response for get_attempt");
+    return future;
 }
 
-context_state client_impl::get_context_state() {
+attempt_state client_impl::get_attempt() {
+    return get_attempt_async().get();
+}
+
+std::future<context_state> client_impl::get_context_state_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::query;
     op->query = query_method::GET_CONTEXT_STATE;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<context_state>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        promise->set_value(std::get<context_state_response>(response).result);
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (const auto* value = std::get_if<context_state_response>(&response)) return value->result;
-    throw error(error_kind::internal_error, "unexpected response for get_context_state");
+    return future;
 }
 
-completed_count_value client_impl::get_completed_count() {
+context_state client_impl::get_context_state() {
+    return get_context_state_async().get();
+}
+
+std::future<completed_count_value> client_impl::get_completed_count_async() {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::query;
     op->query = query_method::GET_COMPLETED_COUNT;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<completed_count_value>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        promise->set_value(std::get<completed_count_response>(response).result);
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (const auto* value = std::get_if<completed_count_response>(&response)) return value->result;
-    throw error(error_kind::internal_error, "unexpected response for get_completed_count");
+    return future;
 }
 
-void client_impl::timer_control(timer_operation value) {
+completed_count_value client_impl::get_completed_count() {
+    return get_completed_count_async().get();
+}
+
+std::future<void> client_impl::timer_control_async(timer_operation value) {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::control;
     op->timer = value;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<void>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        if (!std::holds_alternative<control_success_response>(response)) {
+            throw error(error_kind::internal_error, "unexpected response for timer control");
+        }
+        promise->set_value();
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (!std::holds_alternative<control_success_response>(response)) {
-        throw error(error_kind::internal_error, "unexpected response for timer control");
-    }
+    return future;
 }
 
-void client_impl::game_control(game_control_operation value) {
+void client_impl::timer_control(timer_operation value) {
+    timer_control_async(value).get();
+}
+
+std::future<void> client_impl::game_control_async(game_control_operation value) {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::control;
     op->game_time = true;
     op->game = value;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<void>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        if (!std::holds_alternative<control_success_response>(response)) {
+            throw error(error_kind::internal_error, "unexpected response for game-time control");
+        }
+        promise->set_value();
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (!std::holds_alternative<control_success_response>(response)) {
-        throw error(error_kind::internal_error, "unexpected response for game-time control");
-    }
+    return future;
 }
 
-void client_impl::set_game_time(std::int64_t ticks) {
+void client_impl::game_control(game_control_operation value) {
+    game_control_async(value).get();
+}
+
+std::future<void> client_impl::set_game_time_async(std::int64_t ticks) {
     auto op = std::make_shared<operation>();
     op->type = operation::kind::control;
     op->game_time = true;
     op->game_set = true;
     op->ticks = ticks;
-    op->response = std::make_shared<std::promise<rpc_response>>();
-    auto future = op->response->get_future();
+    auto promise = std::make_shared<std::promise<void>>();
+    auto future = promise->get_future();
+    op->on_response = [promise](const rpc_response& response) {
+        if (!std::holds_alternative<control_success_response>(response)) {
+            throw error(error_kind::internal_error, "unexpected response for set_game_time");
+        }
+        promise->set_value();
+    };
+    op->on_error = [promise](const error& failure) {
+        promise->set_exception(std::make_exception_ptr(failure));
+    };
     enqueue_from_public(op);
-    const auto response = future.get();
-    if (!std::holds_alternative<control_success_response>(response)) {
-        throw error(error_kind::internal_error, "unexpected response for set_game_time");
-    }
+    return future;
+}
+
+void client_impl::set_game_time(std::int64_t ticks) {
+    set_game_time_async(ticks).get();
 }
 std::optional<bridge_event> client_impl::next_event(std::chrono::milliseconds timeout) {
     std::unique_lock lock(mutex_);

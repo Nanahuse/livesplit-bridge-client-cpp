@@ -69,6 +69,17 @@ nlohmann::json timer_event_json(
     };
 }
 
+nlohmann::json changed_event_json(
+    std::uint32_t session_id,
+    std::uint32_t sequence,
+    std::string_view type) {
+    return {
+        {"session_id", session_id},
+        {"event_sequence", sequence},
+        {"type", type},
+        {"timer_state", nullptr},
+    };
+}
 error_kind capture_error_kind(const std::function<void()>& operation) {
     try {
         operation();
@@ -367,6 +378,75 @@ TEST_CASE("operations time out while no Bridge is available") {
 
     REQUIRE(capture_error_kind([&] { (void)bridge.get_timer_state(); }) == error_kind::timeout);
     bridge.close();
+}
+TEST_CASE("async queries return without blocking the caller") {
+    fixture f;
+    f.server.set_behavior("get_timer_state", {.delay_ms = 300});
+
+    const auto started = std::chrono::steady_clock::now();
+    auto future = f.bridge.get_timer_state_async();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    REQUIRE(elapsed < 150ms);
+    REQUIRE(future.wait_for(0ms) == std::future_status::timeout);
+    REQUIRE(future.get().phase == timer_phase::NOT_RUNNING);
+}
+
+TEST_CASE("a run change during synchronization is not lost") {
+    fixture f;
+    f.server.clear_counts();
+    f.server.set_behavior("get_context_state", {.delay_ms = 300});
+
+    auto future = f.bridge.synchronize_async();
+    REQUIRE(wait_until([&] { return f.server.method_count("get_run") >= 1; }));
+    f.server.set_run_game_name("Changed Game");
+    f.server.send_event(changed_event_json(42, 1, "run_changed"));
+
+    const auto state = future.get();
+    REQUIRE(state.run.game_name == "Changed Game");
+    REQUIRE(f.server.method_count("get_run") >= 2);
+
+    const auto event = f.bridge.next_event(1s);
+    REQUIRE(event.has_value());
+    REQUIRE(std::holds_alternative<livesplit::bridge::changed_event>(*event));
+}
+
+TEST_CASE("a timer change during synchronization is not lost") {
+    fixture f;
+    f.server.clear_counts();
+    f.server.set_behavior("get_context_state", {.delay_ms = 300});
+
+    auto future = f.bridge.synchronize_async();
+    REQUIRE(wait_until([&] { return f.server.method_count("get_run") >= 1; }));
+    f.server.set_timer_phase(timer_phase::RUNNING);
+    f.server.send_event(timer_event_json(42, 1, "timer_started"));
+
+    const auto state = future.get();
+    REQUIRE(state.timer.phase == timer_phase::RUNNING);
+    REQUIRE(f.server.method_count("get_timer_state") >= 2);
+}
+
+TEST_CASE("event queue overflow is observable") {
+    fixture f;
+    for (std::uint32_t sequence = 1; sequence <= 4200; ++sequence) {
+        f.server.send_event(timer_event_json(42, sequence));
+    }
+
+    REQUIRE(wait_until([&] { return f.bridge.dropped_event_count() > 0; }, 10s));
+    REQUIRE(f.bridge.next_event(1s).has_value());
+}
+
+TEST_CASE("closing with an in-flight control reports an unknown result") {
+    fixture f;
+    f.server.clear_counts();
+    f.server.set_behavior("timer_operation", {.no_response = 1});
+
+    auto future = f.bridge.start_async();
+    REQUIRE(wait_until([&] { return f.server.method_count("timer_operation") >= 1; }));
+    f.bridge.close();
+
+    REQUIRE(
+        capture_error_kind([&] { future.get(); }) ==
+        error_kind::control_result_unknown);
 }
 TEST_CASE("remote errors do not break the connection") {
     fixture f;

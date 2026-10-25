@@ -9,6 +9,7 @@
 - 全 8 種類の Event と `session_id` / `event_sequence` の連続性検証
 - 切断後の自動再接続、Session 変更・Event 欠落時の自動再同期
 - Control の結果不明時に自動再送しない
+- 同期 API と `std::future` ベースの非同期 API
 - 公開 API に Boost.Beast / Boost.Asio の型を出さない
 - 公式 JSON Schema から生成した通信モデルを同梱
 
@@ -103,6 +104,15 @@ int main() {
 }
 ```
 
+非同期 API は送信キューへ積んで即座に戻ります。
+
+```cpp
+auto run_future = bridge.get_run_async();
+auto icons_future = bridge.get_run_icons_async();
+const run_state run = run_future.get();
+const run_icons icons = icons_future.get();
+```
+
 アイコンは Base64 文字列として取得し、必要なら PNG bytes に変換できます。
 
 ```cpp
@@ -123,24 +133,30 @@ const decoded_run_icons decoded = decode_run_icons(wire);
 - `current_snapshot()` は最後に同期した Snapshot を返します。Timer State は受信した
   Timer Event でも更新されます。`not_ready` の間は例外になります。
 - `get_run()` と `get_run_icons()` は別要求です。間に Run が切り替わる可能性があります。
+- 各 Query / Control / `synchronize` には `_async()` 版があり、`std::future` を返して
+  呼び出し元をブロックしません。同期版はその便利ラッパーです。
+- Event は同期中も検証・配送を継続します。同期中に Event が届いた場合は Query を
+  やり直し、古い Snapshot で Ready にならないようにします。
 
 ### 再接続・再同期
 
 - RPC / Events の切断後はバックオフ付きで自動再接続し、両接続が揃ってから再同期します。
 - Event の `session_id` 変更、RPC と Events の Session 不一致では両接続を再接続します。
 - Event の Session 不一致、`event_sequence` の欠落・重複・逆順、不正 Event では
-  接続を維持したまま Query による再同期を行います。再同期中に到着した Event は破棄し、
-  完了後の最初の Event を新しい基準にします。
-- 再同期中も、既にキューにある検証済み Event は破棄しません。
+  接続を維持したまま Query による再同期を行います。再同期中も Event の検証・配送を
+  継続し、変更通知が届いた場合は同期をやり直します。
+- 内部の Event キューは 4,096 件で上限です。利用側が消費しないまま溢れた場合、
+  `dropped_event_count()` が増加します。値が増えたら Query で現在値を再取得してください。
 - Events はベストエフォートです。履歴再送はないため、Event は状態再取得のきっかけとして
   扱ってください。
-- Control がタイムアウト、または送信後に通信異常になった場合、
-  `error_kind::control_result_unknown` を返し、自動再送しません。再接続・再同期後に
-  Query で結果を確認してください。
+- Control がタイムアウト、送信後に通信異常になった場合、または送信済みのまま
+  `close()` した場合は、`error_kind::control_result_unknown` を返し、自動再送しません。
+  再接続・再同期後に Query で結果を確認してください。
 
 ### エラー
 
-すべての公開 API は `livesplit::bridge::error` を投げます。`kind()` で分類できます。
+同期 API は `livesplit::bridge::error` を投げ、非同期 API は `std::future` に同じ例外を
+設定します。`kind()` で分類できます。
 
 | `error_kind` | 内容 |
 | --- | --- |
@@ -163,8 +179,9 @@ Query と Events は Origin に関係なく利用できます。
 ### スレッド
 
 内部の通信スレッドは 1 本です。公開 API は複数スレッドから呼び出せますが、1 つの
-`client` インスタンスに対する操作は内部で直列化されます。`next_event()` と Query を
-同じスレッドで交互に呼ぶ必要はありません。
+`client` インスタンスに対する操作は内部で直列化されます。非同期 API は送信キューへ
+積んで即座に戻ります。`next_event()` と Query を同じスレッドで交互に呼ぶ必要は
+ありません。
 
 ## CLI
 

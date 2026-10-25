@@ -101,6 +101,15 @@ public:
         std::lock_guard lock(state_mutex_);
         icon_bytes_ = count;
     }
+    void set_run_game_name(std::string name) {
+        std::lock_guard lock(state_mutex_);
+        run_.game_name = std::move(name);
+    }
+
+    void set_timer_phase(livesplit::bridge::timer_phase phase) {
+        std::lock_guard lock(state_mutex_);
+        timer_.phase = phase;
+    }
 
     void set_behavior(const std::string& method, behavior value) {
         std::lock_guard lock(state_mutex_);
