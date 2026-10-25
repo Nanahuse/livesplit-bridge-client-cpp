@@ -19,6 +19,7 @@ enum class error_kind {
     protocol_error,
     remote_error,
     control_result_unknown,
+    unstable_state,
     internal_error,
 };
 

@@ -16,6 +16,11 @@ struct client_options {
     std::chrono::milliseconds connect_timeout{3000};
     std::chrono::milliseconds response_timeout{3000};
     std::chrono::milliseconds ready_timeout{10000};
+    // Upper bound for one synchronization attempt, including re-fetching state
+    // changed by Events. If it expires, synchronization fails with
+    // error_kind::timeout or error_kind::unstable_state and the client
+    // reconnects.
+    std::chrono::milliseconds sync_timeout{10000};
     std::chrono::milliseconds reconnect_initial_delay{250};
     std::chrono::milliseconds reconnect_max_delay{5000};
 

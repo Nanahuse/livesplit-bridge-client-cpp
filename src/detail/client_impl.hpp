@@ -106,6 +106,9 @@ private:
         std::uint32_t id{};
         operation::kind kind{};
         bool write_started{false};
+        bool write_complete{false};
+        bool has_deferred_response{false};
+        std::string deferred_response;
         std::shared_ptr<boost::asio::steady_timer> timer;
     };
 
@@ -193,7 +196,6 @@ private:
     bool sync_needed_{true};
     bool reconnect_when_idle_{false};
     bool ever_ready_{false};
-    bool sync_dirty_{false};
     bool event_baseline_reset_{true};
 
     std::chrono::milliseconds next_reconnect_delay_{0};
@@ -209,7 +211,10 @@ private:
     std::optional<std::uint32_t> last_event_sequence_;
 
     std::uint32_t sync_session_{0};
-    int sync_step_{0};
+    std::deque<query_method> sync_queue_;
+    query_method sync_method_{};
+    std::uint8_t sync_dirty_parts_{0};
+    std::chrono::steady_clock::time_point sync_deadline_{};
     snapshot sync_snapshot_;
     std::uint64_t dropped_event_count_{0};
 };

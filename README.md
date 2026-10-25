@@ -128,15 +128,17 @@ const decoded_run_icons decoded = decode_run_icons(wire);
 
 - コンストラクタはワーカースレッドを開始し、自動的に接続・同期します。
 - `wait_until_ready()` は初回同期、または自動再接続後の再同期完了まで待機します。
-- `synchronize()` はアイコンを除く 5 種類の Query を同一 Session で実行し、Snapshot を更新します。
-  5 つの Query が同一時点の値である保証はありません。
+- `synchronize()` はアイコンを除く 5 種類の Query を同一 Session で実行し、Snapshot を
+  更新します。同期中の Event に応じて必要な Query を追加します。全 Query が同一時点の
+  値である保証はありません。
 - `current_snapshot()` は最後に同期した Snapshot を返します。Timer State は受信した
   Timer Event でも更新されます。`not_ready` の間は例外になります。
 - `get_run()` と `get_run_icons()` は別要求です。間に Run が切り替わる可能性があります。
 - 各 Query / Control / `synchronize` には `_async()` 版があり、`std::future` を返して
   呼び出し元をブロックしません。同期版はその便利ラッパーです。
-- Event は同期中も検証・配送を継続します。同期中に Event が届いた場合は Query を
-  やり直し、古い Snapshot で Ready にならないようにします。
+- Event は同期中も検証・配送を継続します。同期中に Event が届いた場合は変更された
+  状態だけを再取得し、古い Snapshot で Ready にならないようにします。
+- `sync_timeout` 内に状態が安定しない場合は `unstable_state` として中断し、再接続します。
 
 ### 再接続・再同期
 
@@ -144,7 +146,8 @@ const decoded_run_icons decoded = decode_run_icons(wire);
 - Event の `session_id` 変更、RPC と Events の Session 不一致では両接続を再接続します。
 - Event の Session 不一致、`event_sequence` の欠落・重複・逆順、不正 Event では
   接続を維持したまま Query による再同期を行います。再同期中も Event の検証・配送を
-  継続し、変更通知が届いた場合は同期をやり直します。
+  継続し、変更通知が届いた場合は変更された状態だけを再取得します。`sync_timeout` 内に
+  安定しない場合は `unstable_state` として中断し、再接続します。
 - 内部の Event キューは 4,096 件で上限です。利用側が消費しないまま溢れた場合、
   `dropped_event_count()` が増加します。値が増えたら Query で現在値を再取得してください。
 - Events はベストエフォートです。履歴再送はないため、Event は状態再取得のきっかけとして
@@ -167,6 +170,7 @@ const decoded_run_icons decoded = decode_run_icons(wire);
 | `protocol_error` | 不正な frame / JSON / Request ID / 結果型 |
 | `remote_error` | Bridge が返した構造化エラー。`remote()` に code / message |
 | `control_result_unknown` | Control の実行結果が不明。再送しない |
+| `unstable_state` | 同期中に状態が変わり続け、`sync_timeout` 内に安定しなかった |
 | `internal_error` | クライアント内部の不整合 |
 
 ### Origin
@@ -247,7 +251,8 @@ TestHost が未設定の場合はテストは登録されません。
 
 - Bridge は `127.0.0.1` のみで待ち受けるため、接続先はローカル PC です。
 - 現時点では `ws://` のみ対応し、TLS は使用しません。
-- 公開 API は同期呼び出しです。内部通信は非同期ですが、Future 等は公開しません。
+- 同期 API と `std::future` ベースの非同期 API を提供します。非同期操作も 1 本の
+  ワーカースレッドで直列に処理されます。
 - 1 クライアントインスタンスは 1 つの Bridge ポートに接続します。複数接続先は
   インスタンスを分けてください。
 - Run Icons は同期 Snapshot に含みません。必要時に `get_run_icons()` を呼び出します。

@@ -1,6 +1,8 @@
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <limits>
 #include <string>
 #include <thread>
@@ -422,9 +424,39 @@ TEST_CASE("a timer change during synchronization is not lost") {
 
     const auto state = future.get();
     REQUIRE(state.timer.phase == timer_phase::RUNNING);
-    REQUIRE(f.server.method_count("get_timer_state") >= 2);
 }
 
+TEST_CASE("continuous events terminate synchronization with unstable_state") {
+    test_support::mock_bridge_server server;
+    auto options = options_for_port(server.port());
+    options.sync_timeout = 200ms;
+    client bridge(options);
+    bridge.wait_until_ready(5s);
+
+    server.set_behavior("get_run", {.delay_ms = 50});
+    std::atomic<bool> stop{false};
+    std::thread sender([&] {
+        std::uint32_t sequence = 1;
+        while (!stop.load()) {
+            server.send_event(changed_event_json(42, sequence++, "run_changed"));
+            std::this_thread::sleep_for(5ms);
+        }
+    });
+
+    auto future = bridge.synchronize_async();
+    std::optional<error_kind> failure_kind;
+    try {
+        (void)future.get();
+    } catch (const error& failure) {
+        failure_kind = failure.kind();
+    }
+
+    stop.store(true);
+    sender.join();
+    REQUIRE(failure_kind.has_value());
+    REQUIRE(*failure_kind == error_kind::unstable_state);
+    bridge.close();
+}
 TEST_CASE("event queue overflow is observable") {
     fixture f;
     for (std::uint32_t sequence = 1; sequence <= 4200; ++sequence) {

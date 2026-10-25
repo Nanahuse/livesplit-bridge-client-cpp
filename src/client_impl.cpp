@@ -28,6 +28,38 @@ constexpr auto sync_queries = std::array{
     query_method::GET_COMPLETED_COUNT,
 };
 
+constexpr std::uint8_t sync_timer_part = 1U << 0;
+constexpr std::uint8_t sync_attempt_part = 1U << 1;
+constexpr std::uint8_t sync_run_part = 1U << 2;
+constexpr std::uint8_t sync_context_part = 1U << 3;
+constexpr std::uint8_t sync_completed_part = 1U << 4;
+constexpr std::uint8_t sync_all_parts =
+    sync_timer_part | sync_attempt_part | sync_run_part | sync_context_part | sync_completed_part;
+
+[[nodiscard]] bool contains_query(
+    const std::deque<query_method>& queue,
+    query_method method) {
+    return std::find(queue.begin(), queue.end(), method) != queue.end();
+}
+
+[[nodiscard]] std::uint8_t part_for_query(query_method method) {
+    switch (method) {
+        case query_method::GET_TIMER_STATE:
+            return sync_timer_part;
+        case query_method::GET_ATTEMPT:
+            return sync_attempt_part;
+        case query_method::GET_RUN:
+            return sync_run_part;
+        case query_method::GET_CONTEXT_STATE:
+            return sync_context_part;
+        case query_method::GET_COMPLETED_COUNT:
+            return sync_completed_part;
+        case query_method::GET_RUN_ICONS:
+            return 0;
+    }
+    return 0;
+}
+
 [[nodiscard]] std::uint32_t next_counter(std::uint32_t value) noexcept {
     return value == std::numeric_limits<std::uint32_t>::max() ? 0 : value + 1;
 }
@@ -532,7 +564,7 @@ void client_impl::handle_event_text(const std::string& text) {
         event = parse_bridge_event(text);
     } catch (const std::exception&) {
         if (current_ && current_->type == operation::kind::synchronize) {
-            sync_dirty_ = true;
+            sync_dirty_parts_ |= sync_all_parts;
             event_baseline_reset_ = true;
             last_event_sequence_.reset();
         } else {
@@ -567,7 +599,7 @@ void client_impl::handle_event_text(const std::string& text) {
             : *last_event_sequence_ + 1u;
         if (sequence != expected) {
             if (current_ && current_->type == operation::kind::synchronize) {
-                sync_dirty_ = true;
+                sync_dirty_parts_ |= sync_all_parts;
                 event_baseline_reset_ = true;
                 last_event_sequence_.reset();
             } else {
@@ -577,18 +609,54 @@ void client_impl::handle_event_text(const std::string& text) {
         }
     }
     last_event_sequence_ = sequence;
-    if (current_ && current_->type == operation::kind::synchronize) {
-        sync_dirty_ = true;
-    }
+
+    const bool syncing = current_ && current_->type == operation::kind::synchronize;
+    const bool timer_query_in_flight = pending_ &&
+        pending_->kind == operation::kind::synchronize &&
+        sync_method_ == query_method::GET_TIMER_STATE;
+    const auto invalidate = [this, syncing](query_method method) {
+        if (!syncing) return;
+        const bool in_flight = pending_ &&
+            pending_->kind == operation::kind::synchronize &&
+            sync_method_ == method;
+        if (in_flight || !contains_query(sync_queue_, method)) {
+            sync_dirty_parts_ |= part_for_query(method);
+        }
+    };
 
     std::optional<timer_state> timer_update;
     std::visit(
-        [&timer_update](const auto& value) {
+        [&](const auto& value) {
             using value_type = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<value_type, timer_event>) {
                 timer_update = value.timer_state;
+                if (syncing) {
+                    if (timer_query_in_flight) {
+                        sync_dirty_parts_ |= sync_timer_part;
+                    } else {
+                        sync_snapshot_.timer = value.timer_state;
+                    }
+                }
             } else if constexpr (std::is_same_v<value_type, reset_event>) {
                 timer_update = value.timer_state;
+                if (syncing) {
+                    if (value.timer_state) {
+                        if (timer_query_in_flight) sync_dirty_parts_ |= sync_timer_part;
+                        else sync_snapshot_.timer = *value.timer_state;
+                    } else if (
+                        timer_query_in_flight ||
+                        !contains_query(sync_queue_, query_method::GET_TIMER_STATE)) {
+                        sync_dirty_parts_ |= sync_timer_part;
+                    }
+                    invalidate(query_method::GET_ATTEMPT);
+                    invalidate(query_method::GET_COMPLETED_COUNT);
+                }
+            } else {
+                if (value.type == changed_event_type::RUN_CHANGED) {
+                    invalidate(query_method::GET_RUN);
+                } else {
+                    invalidate(query_method::GET_CONTEXT_STATE);
+                }
             }
         },
         event);
@@ -604,6 +672,15 @@ void client_impl::handle_event_text(const std::string& text) {
 
 void client_impl::handle_rpc_text(const std::string& text) {
     if (closed_ || io_stopping_) return;
+    if (!pending_) {
+        on_rpc_protocol_failure("RPC response received without a pending request");
+        return;
+    }
+    if (!pending_->write_complete) {
+        pending_->deferred_response = text;
+        pending_->has_deferred_response = true;
+        return;
+    }
 
     rpc_response response;
     try {
@@ -707,13 +784,8 @@ void client_impl::handle_sync_response(
         on_rpc_protocol_failure("synchronization response received without a sync operation");
         return;
     }
-    if (sync_step_ < 0 || sync_step_ >= static_cast<int>(sync_queries.size())) {
-        fail_sync(op, error(error_kind::internal_error, "invalid synchronization step"));
-        begin_reconnect("synchronization state is invalid");
-        return;
-    }
 
-    const auto expected = sync_queries[static_cast<std::size_t>(sync_step_)];
+    const auto expected = sync_method_;
     if (!is_query_response(response, expected)) {
         fail_sync(
             op,
@@ -755,7 +827,6 @@ void client_impl::handle_sync_response(
             return;
     }
 
-    ++sync_step_;
     send_next_sync_query(op);
 }
 
@@ -763,7 +834,7 @@ void client_impl::begin_resync(std::string reason) {
     (void)reason;
     if (closed_ || io_stopping_ || connecting_ || connect_scheduled_) return;
     if (current_ && current_->type == operation::kind::synchronize) {
-        sync_dirty_ = true;
+        sync_dirty_parts_ |= sync_all_parts;
         event_baseline_reset_ = true;
         last_event_sequence_.reset();
         return;
@@ -915,16 +986,18 @@ void client_impl::start_sync(const std::shared_ptr<operation>& op) {
         return;
     }
     sync_session_ = 0;
-    sync_step_ = 0;
     sync_snapshot_ = {};
+    sync_queue_.clear();
+    for (const auto method : sync_queries) sync_queue_.push_back(method);
+    sync_dirty_parts_ = 0;
+    sync_deadline_ = std::chrono::steady_clock::now() + options_.sync_timeout;
     sync_needed_ = false;
-    sync_dirty_ = false;
     set_state(connection_state::synchronizing);
     send_next_sync_query(op);
 }
 
 void client_impl::send_next_sync_query(const std::shared_ptr<operation>& op) {
-    if (sync_step_ >= static_cast<int>(sync_queries.size())) {
+    if (sync_queue_.empty()) {
         // Let already-queued Event handlers run before deciding that the pass is
         // clean. This narrows the window in which a change can be observed after
         // the last Query but before Ready.
@@ -934,7 +1007,17 @@ void client_impl::send_next_sync_query(const std::shared_ptr<operation>& op) {
         return;
     }
 
-    const auto method = sync_queries[static_cast<std::size_t>(sync_step_)];
+    if (std::chrono::steady_clock::now() >= sync_deadline_) {
+        sync_queue_.clear();
+        sync_dirty_parts_ = 0;
+        fail_sync(op, error(error_kind::timeout, "synchronization timed out"));
+        begin_reconnect("synchronization timed out");
+        return;
+    }
+
+    const auto method = sync_queue_.front();
+    sync_queue_.pop_front();
+    sync_method_ = method;
     const auto request_id = allocate_request_id();
     query_request request;
     request.request_id = request_id;
@@ -959,11 +1042,36 @@ void client_impl::finish_sync(const std::shared_ptr<operation>& op) {
         begin_reconnect("Events and RPC sessions differ");
         return;
     }
-    if (sync_dirty_) {
-        sync_dirty_ = false;
-        sync_session_ = 0;
-        sync_step_ = 0;
-        sync_snapshot_ = {};
+    if (sync_dirty_parts_ != 0) {
+        if (std::chrono::steady_clock::now() >= sync_deadline_) {
+            sync_dirty_parts_ = 0;
+            sync_queue_.clear();
+            fail_sync(
+                op,
+                error(
+                    error_kind::unstable_state,
+                    "state changed continuously during synchronization"));
+            begin_reconnect("synchronization did not stabilize");
+            return;
+        }
+
+        const auto dirty = sync_dirty_parts_;
+        sync_dirty_parts_ = 0;
+        if ((dirty & sync_timer_part) != 0) {
+            sync_queue_.push_back(query_method::GET_TIMER_STATE);
+        }
+        if ((dirty & sync_attempt_part) != 0) {
+            sync_queue_.push_back(query_method::GET_ATTEMPT);
+        }
+        if ((dirty & sync_run_part) != 0) {
+            sync_queue_.push_back(query_method::GET_RUN);
+        }
+        if ((dirty & sync_context_part) != 0) {
+            sync_queue_.push_back(query_method::GET_CONTEXT_STATE);
+        }
+        if ((dirty & sync_completed_part) != 0) {
+            sync_queue_.push_back(query_method::GET_COMPLETED_COUNT);
+        }
         send_next_sync_query(op);
         return;
     }
@@ -1111,6 +1219,8 @@ void client_impl::send_request(
 
     auto data = std::make_shared<std::string>(std::move(payload));
     request->write_started = true;
+    request->write_complete = false;
+    request->has_deferred_response = false;
     rpc_->websocket_stream.async_write(
         boost::asio::buffer(*data),
         [self = shared_from_this(), connection = rpc_, data, request](
@@ -1121,6 +1231,13 @@ void client_impl::send_request(
                 self->on_rpc_transport_failure(
                     connection,
                     "RPC write failed: " + ec.message());
+                return;
+            }
+            request->write_complete = true;
+            if (request->has_deferred_response) {
+                auto deferred = std::move(request->deferred_response);
+                request->has_deferred_response = false;
+                self->handle_rpc_text(deferred);
             }
         });
 }

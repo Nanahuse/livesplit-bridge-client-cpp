@@ -18,6 +18,8 @@ std::string_view to_string(error_kind kind) noexcept {
             return "remote_error";
         case error_kind::control_result_unknown:
             return "control_result_unknown";
+        case error_kind::unstable_state:
+            return "unstable_state";
         case error_kind::internal_error:
             return "internal_error";
     }

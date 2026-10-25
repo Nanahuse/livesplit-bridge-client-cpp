@@ -71,8 +71,11 @@ public:
     [[nodiscard]] snapshot current_snapshot() const;
 
     // Runs the five snapshot Query RPCs in one session and replaces the cached
-    // snapshot. Run icons are fetched separately because their response can be
-    // larger than 64 KiB.
+    // snapshot. Events delivered during the pass cause only the affected state
+    // to be fetched again. If the pass cannot stabilize within
+    // client_options::sync_timeout, error_kind::unstable_state is returned.
+    // Run icons are fetched separately because their response can be larger
+    // than 64 KiB.
     [[nodiscard]] snapshot synchronize();
     [[nodiscard]] std::future<snapshot> synchronize_async();
 
