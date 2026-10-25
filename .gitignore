@@ -69,3 +69,7 @@ Testing/
 
 # external integration checkout
 .testhost/
+
+# Python generator cache
+__pycache__/
+*.pyc

@@ -16,7 +16,7 @@
 一致しない場合は生成を中止します。独自 Schema や手動の通信 DTO はありません。
 
 生成結果は `include/livesplit/bridge/protocol.hpp` にコミットしています。通常の
-ビルド時に Node.js や生成ツールは不要です。
+ビルド時に Python や生成ツールは不要です。
 
 ## quicktype の適合性確認
 
@@ -40,9 +40,10 @@ quicktype は第一候補として実際に公式 Schema で検証しました�
    生成しません。
 5. `oneOf` の分岐選択を検証せず、Request の method / result 型の対応も表現できません。
 
-このため、追加依存のない決定論的な生成器 `tools/generate-models.mjs` を使用します。
-生成器は公式 Schema の `$defs` / `$ref`、各ルートの `oneOf`、nullable、`const`、
-enum、整数範囲、`additionalProperties: false` を入力として扱います。
+このため、Python 標準ライブラリだけで動く決定論的な生成器
+`tools/generate_models.py` を使用します。生成器は公式 Schema の `$defs` / `$ref`、
+各ルートの `oneOf`、nullable、`const`、enum、整数範囲、
+`additionalProperties: false` を入力として扱います。
 
 ## 生成規則
 
@@ -68,8 +69,8 @@ enum、整数範囲、`additionalProperties: false` を入力として扱いま�
 ## 実行
 
 ```powershell
-node tools/generate-models.mjs
-node tools/generate-models.mjs --check
+python tools/generate_models.py
+python tools/generate_models.py --check
 ```
 
 `--check` はコミット済みヘッダーと生成結果を比較し、差分があれば失敗します。
@@ -81,9 +82,9 @@ node tools/generate-models.mjs --check
    確定コミット SHA に更新します。
 2. 固定コミットの 3 つの Schema を無改変で `schemas/v4/` に取得し、`SOURCE.json` の
    SHA-256 を更新します。
-3. `node tools/generate-models.mjs` を実行します。
+3. `python tools/generate_models.py` を実行します。
 4. 公開型名が変わった場合はクライアント API とテストを調整します。
-5. `node tools/generate-models.mjs --check`、通常テスト、公式 TestHost 結合テストを
+5. `python tools/generate_models.py --check`、通常テスト、公式 TestHost 結合テストを
    実行し、生成結果をコミットします。
 
 ## Fixture

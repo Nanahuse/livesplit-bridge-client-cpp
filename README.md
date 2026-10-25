@@ -22,7 +22,9 @@
 | ビルド | CMake 3.25 以上 |
 | 依存管理 | vcpkg manifest |
 | 依存ライブラリ | Boost.Asio / Boost.Beast / nlohmann/json |
-| テスト | Catch2 3、CTest |\n| TestHost 結合テスト | Python 3 |
+| テスト | Catch2 3、CTest |
+| モデル生成 | Python 3 |
+| TestHost 結合テスト | Python 3 |
 
 ## ビルド
 
@@ -187,12 +189,13 @@ build\dev\livesplit_bridge_cli.exe --port 54000 events --count 10
 
 ## モデル生成
 
-通信モデルは固定した公式 Schema から生成し、`include/livesplit/bridge/protocol.hpp`
-として Git 管理しています。通常のビルドに Node.js は不要です。
+通信モデルは固定した公式 Schema から Python 標準ライブラリのみで生成し、
+`include/livesplit/bridge/protocol.hpp` として Git 管理しています。通常のビルドに
+Python は不要です。
 
 ```powershell
-node tools/generate-models.mjs
-node tools/generate-models.mjs --check
+python tools/generate_models.py
+python tools/generate_models.py --check
 ```
 
 quicktype の適合性確認結果と生成規則は
