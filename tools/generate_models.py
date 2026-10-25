@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """Deterministic generator for the LiveSplit.Bridge JSON v4 wire models.
 
-The official schemas are pinned by tools/protocol-source.json and
-schemas/v4/SOURCE.json. The generated header is committed; normal builds do
-not require Python. Run ``python tools/generate_models.py --check`` in CI.
+The official schemas are pinned by tools/protocol-source.json and fetched into
+memory from the pinned revision. They are not stored in this repository. The
+generated header is committed; normal builds do not require Python. Run
+``python tools/generate_models.py --check`` in CI. Use ``--source PATH`` to read
+the schemas from a local LiveSplit.Bridge checkout instead of the network.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-SCHEMA_DIR = ROOT / "schemas" / "v4"
 OUTPUT_PATH = ROOT / "include" / "livesplit" / "bridge" / "protocol.hpp"
+PROTOCOL_SOURCE_PATH = ROOT / "tools" / "protocol-source.json"
 GENERATOR = "tools/generate_models.py"
 
 
@@ -38,33 +43,60 @@ def read_json(file: Path) -> Any:
         fail(f"cannot read {file.relative_to(ROOT)}: {error}")
 
 
-def sha256(file: Path) -> str:
-    # Git may check out text files with CRLF on Windows. Hash the canonical LF
-    # form so the pinned official schemas remain verifiable.
-    text = file.read_text(encoding="utf-8").replace("\r\n", "\n")
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def sha256_text(text: str) -> str:
+    # Hash the canonical LF form so local checkouts with CRLF are accepted.
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
 
-protocol_source = read_json(ROOT / "tools" / "protocol-source.json")
-source = read_json(SCHEMA_DIR / "SOURCE.json")
-if protocol_source["revision"] != source["revision"]:
-    fail("tools/protocol-source.json and schemas/v4/SOURCE.json revisions differ")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify that the committed generated header is up to date",
+    )
+    parser.add_argument(
+        "--source",
+        type=Path,
+        help="read schemas from this LiveSplit.Bridge checkout instead of downloading",
+    )
+    return parser.parse_args()
 
-schema_names = [
-    "rpc-request.schema.json",
-    "rpc-response.schema.json",
-    "bridge-event.schema.json",
-]
+
+def read_schema_text(path: str, source_root: Path | None) -> str:
+    if source_root is not None:
+        file = source_root / path
+        try:
+            return file.read_text(encoding="utf-8").replace("\r\n", "\n")
+        except OSError as error:
+            fail(f"cannot read schema {file}: {error}")
+
+    url = (
+        f"{protocol_source['raw_base'].rstrip('/')}/{protocol_source['revision']}/"
+        f"{urllib.parse.quote(path, safe='/')}"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read().decode("utf-8").replace("\r\n", "\n")
+    except Exception as error:
+        fail(f"cannot fetch schema {url}: {error}")
+
+
+args = parse_args()
+protocol_source = read_json(PROTOCOL_SOURCE_PATH)
+schema_names = list(protocol_source["schemas"])
 documents: dict[str, Any] = {}
 for name in schema_names:
-    file = SCHEMA_DIR / name
-    expected = source["files"].get(name)
-    if not expected:
-        fail(f"schemas/v4/SOURCE.json has no hash for {name}")
-    actual = sha256(file)
+    entry = protocol_source["schemas"][name]
+    text = read_schema_text(entry["path"], args.source)
+    actual = sha256_text(text)
+    expected = entry["sha256"]
     if actual != expected:
         fail(f"{name} differs from the pinned official schema (expected {expected}, got {actual})")
-    documents[name] = read_json(file)
+    try:
+        documents[name] = json.loads(text)
+    except json.JSONDecodeError as error:
+        fail(f"cannot parse {name}: {error}")
 
 # Merge the official definitions and require exact agreement for shared names.
 defs: dict[str, Any] = {}
@@ -741,7 +773,7 @@ lines.append("")
 
 generated = "\n".join(lines)
 
-if "--check" in sys.argv:
+if args.check:
     try:
         existing = OUTPUT_PATH.read_text(encoding="utf-8")
     except OSError:

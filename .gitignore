@@ -73,3 +73,6 @@ Testing/
 # Python generator cache
 __pycache__/
 *.pyc
+
+# Official schemas are downloaded at model-generation time
+schemas/

@@ -190,12 +190,15 @@ build\dev\livesplit_bridge_cli.exe --port 54000 events --count 10
 ## モデル生成
 
 通信モデルは固定した公式 Schema から Python 標準ライブラリのみで生成し、
-`include/livesplit/bridge/protocol.hpp` として Git 管理しています。通常のビルドに
-Python は不要です。
+`include/livesplit/bridge/protocol.hpp` として Git 管理しています。Schema 本体は
+リポジトリに保存せず、生成時に固定コミットから取得してメモリ上で検証します。
+通常のビルドに Python は不要です。
 
 ```powershell
 python tools/generate_models.py
 python tools/generate_models.py --check
+# 固定コミットのローカル checkout を使う場合
+python tools/generate_models.py --source C:\path\to\LiveSplit.Bridge
 ```
 
 quicktype の適合性確認結果と生成規則は

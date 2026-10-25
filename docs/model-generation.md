@@ -2,18 +2,20 @@
 
 ## 正本
 
-通信仕様の正本は LiveSplit.Bridge の公式 JSON Schema v4 です。次の確定コミットを
-`tools/protocol-source.json` と `schemas/v4/SOURCE.json` に固定しています。
+通信仕様の正本は LiveSplit.Bridge の公式 JSON Schema v4 です。次の公式リポジトリ、
+確定コミット、Schema を `tools/protocol-source.json` に固定しています。
 
 - Repository: <https://github.com/Nanahuse/LiveSplit.Bridge>
 - Revision: `4c14c0161eacd50b05411c0d20f5eff523e9c155`
-- Schema:
+- Schema path:
   - `schemas/v4/rpc-request.schema.json`
   - `schemas/v4/rpc-response.schema.json`
   - `schemas/v4/bridge-event.schema.json`
 
-`schemas/v4/` のファイルは公式ファイルの無改変コピーです。`SOURCE.json` の SHA-256 と
-一致しない場合は生成を中止します。独自 Schema や手動の通信 DTO はありません。
+Schema 本体はこのリポジトリに保存しません。`tools/protocol-source.json` に公式
+リポジトリ、確定 revision、Schema パス、SHA-256 を固定し、生成時に固定 revision から
+メモリへ取得します。SHA-256 と一致しない場合は生成を中止します。独自 Schema や
+手動の通信 DTO はありません。
 
 生成結果は `include/livesplit/bridge/protocol.hpp` にコミットしています。通常の
 ビルド時に Python や生成ツールは不要です。
@@ -71,20 +73,24 @@ quicktype は第一候補として実際に公式 Schema で検証しました�
 ```powershell
 python tools/generate_models.py
 python tools/generate_models.py --check
+# 固定コミットのローカル checkout を利用する場合（ネットワーク不要）
+python tools/generate_models.py --source C:/path/to/LiveSplit.Bridge
 ```
 
 `--check` はコミット済みヘッダーと生成結果を比較し、差分があれば失敗します。
-出力にタイムスタンプは含めず、同じ入力から常に同じ結果を生成します。
+デフォルトでは固定 revision から Schema を取得します。`--source` を指定した場合は
+その checkout の `schemas/v4/` を読み、同じ SHA-256 検証を行います。Schema ファイルは
+リポジトリにも一時ファイルにも保存しません。出力にタイムスタンプは含めず、同じ入力
+から常に同じ結果を生成します。
 
 ## Schema 更新手順
 
-1. `tools/protocol-source.json` と `schemas/v4/SOURCE.json` の `revision` を対象の
-   確定コミット SHA に更新します。
-2. 固定コミットの 3 つの Schema を無改変で `schemas/v4/` に取得し、`SOURCE.json` の
-   SHA-256 を更新します。
-3. `python tools/generate_models.py` を実行します。
-4. 公開型名が変わった場合はクライアント API とテストを調整します。
-5. `python tools/generate_models.py --check`、通常テスト、公式 TestHost 結合テストを
+1. `tools/protocol-source.json` の `revision`、各 Schema の `path` と `sha256` を
+   対象の確定コミットに更新します。
+2. `python tools/generate_models.py` を実行します。固定コミットから Schema を取得し、
+   SHA-256 を検証して生成します。ローカル checkout を使う場合は `--source` を指定します。
+3. 公開型名が変わった場合はクライアント API とテストを調整します。
+4. `python tools/generate_models.py --check`、通常テスト、公式 TestHost 結合テストを
    実行し、生成結果をコミットします。
 
 ## Fixture
