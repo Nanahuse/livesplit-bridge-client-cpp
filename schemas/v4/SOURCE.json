@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/Nanahuse/LiveSplit.Bridge",
+  "revision": "4c14c0161eacd50b05411c0d20f5eff523e9c155",
+  "files": {
+    "bridge-event.schema.json": "0c054e1e407632749322fb406f8d2885037606ecf9dd51d0ccdf130a1a9229a3",
+    "rpc-request.schema.json": "9a88e41a37809b5ba927b7e49639ffe4bc610ad84913725874fd7c42bc68150c",
+    "rpc-response.schema.json": "738426af4947e9b610d14fc02972db22b3c9e8c4d2989e60536c1c3029315cb1"
+  }
+}

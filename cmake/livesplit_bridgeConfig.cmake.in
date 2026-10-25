@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Boost CONFIG COMPONENTS asio beast)
+find_dependency(nlohmann_json CONFIG)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/livesplit_bridgeTargets.cmake")
+check_required_components(livesplit_bridge)

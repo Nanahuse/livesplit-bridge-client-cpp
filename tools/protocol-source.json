@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/Nanahuse/LiveSplit.Bridge",
+  "revision": "4c14c0161eacd50b05411c0d20f5eff523e9c155",
+  "schemas": [
+    "rpc-request.schema.json",
+    "rpc-response.schema.json",
+    "bridge-event.schema.json"
+  ]
+}

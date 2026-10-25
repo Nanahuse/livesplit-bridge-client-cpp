@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VCPKG_ROOT: C:\vcpkg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check generated protocol models
+        run: node tools/generate-models.mjs --check
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake --preset debug
+      - name: Build
+        run: cmake --build --preset debug
+      - name: Test
+        run: ctest --preset debug -E testhost --output-on-failure
+
+  testhost:
+    runs-on: windows-latest
+    env:
+      VCPKG_ROOT: C:\vcpkg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Nanahuse/LiveSplit.Bridge
+          ref: 4c14c0161eacd50b05411c0d20f5eff523e9c155
+          submodules: recursive
+          path: .testhost/LiveSplit.Bridge
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build TestHost
+        run: dotnet build .testhost/LiveSplit.Bridge/tests/LiveSplit.Bridge.TestHost/LiveSplit.Bridge.TestHost.csproj --configuration Release
+      - name: Register TestHost
+        shell: pwsh
+        run: |
+          "LIVESPLIT_BRIDGE_TESTHOST=$env:GITHUB_WORKSPACE\.testhost\LiveSplit.Bridge\tests\LiveSplit.Bridge.TestHost\bin\Release\net4.8.1\LiveSplit.Bridge.TestHost.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake --preset debug
+      - name: Build
+        run: cmake --build --preset debug
+      - name: TestHost integration
+        run: ctest --preset debug -R testhost --output-on-failure
