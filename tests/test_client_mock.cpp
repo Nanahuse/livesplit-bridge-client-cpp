@@ -36,7 +36,7 @@ client_options options_for_port(std::uint16_t port) {
     client_options options;
     options.port = port;
     options.connect_timeout = 2s;
-    options.response_timeout = 250ms;
+    options.response_timeout = 1s;
     options.ready_timeout = 3s;
     options.reconnect_initial_delay = 10ms;
     options.reconnect_max_delay = 100ms;

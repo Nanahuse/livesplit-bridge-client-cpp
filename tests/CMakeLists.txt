@@ -27,7 +27,7 @@ endif()
 
 include(CTest)
 include(Catch)
-catch_discover_tests(livesplit_bridge_tests)
+catch_discover_tests(livesplit_bridge_tests PROPERTIES TIMEOUT 60)
 
 add_executable(livesplit_bridge_testhost_integration
     integration/testhost_integration.cpp
@@ -56,6 +56,6 @@ if(Python3_Interpreter_FOUND AND DEFINED ENV{LIVESPLIT_BRIDGE_TESTHOST} AND NOT 
                 --client $<TARGET_FILE:livesplit_bridge_testhost_integration>
                 ${extra_args}
         )
-        set_tests_properties(${test_name} PROPERTIES SKIP_RETURN_CODE 77)
+        set_tests_properties(${test_name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     endforeach()
 endif()

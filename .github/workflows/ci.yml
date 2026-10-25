@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -22,7 +23,7 @@ jobs:
       - name: Build
         run: cmake --build --preset debug
       - name: Test
-        run: ctest --preset debug -E testhost --output-on-failure
+        run: ctest --preset debug -E testhost --output-on-failure --timeout 60
 
   testhost:
     runs-on: windows-latest
@@ -54,4 +55,4 @@ jobs:
       - name: Build
         run: cmake --build --preset debug
       - name: TestHost integration
-        run: ctest --preset debug -R testhost --output-on-failure
+        run: ctest --preset debug -R testhost --output-on-failure --timeout 180
