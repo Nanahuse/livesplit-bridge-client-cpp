@@ -1,0 +1,513 @@
+[
+  {
+    "schema": "request",
+    "name": "request 1",
+    "valid": true,
+    "data": {
+      "method": "get_timer_state",
+      "request_id": 1
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 2",
+    "valid": true,
+    "data": {
+      "method": "get_run",
+      "request_id": 2
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 3",
+    "valid": true,
+    "data": {
+      "method": "get_run_icons",
+      "request_id": 3
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 4",
+    "valid": true,
+    "data": {
+      "method": "get_attempt",
+      "request_id": 4
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 5",
+    "valid": true,
+    "data": {
+      "method": "get_context_state",
+      "request_id": 5
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 6",
+    "valid": true,
+    "data": {
+      "method": "get_completed_count",
+      "request_id": 6
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 7",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "start"
+      },
+      "request_id": 7
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 8",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "split"
+      },
+      "request_id": 8
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 9",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "skip"
+      },
+      "request_id": 9
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 10",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "undo"
+      },
+      "request_id": 10
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 11",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "reset"
+      },
+      "request_id": 11
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 12",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "pause"
+      },
+      "request_id": 12
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 13",
+    "valid": true,
+    "data": {
+      "method": "timer_operation",
+      "params": {
+        "operation": "resume"
+      },
+      "request_id": 13
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 14",
+    "valid": true,
+    "data": {
+      "method": "game_time_operation",
+      "params": {
+        "operation": "initialize"
+      },
+      "request_id": 14
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 15",
+    "valid": true,
+    "data": {
+      "method": "game_time_operation",
+      "params": {
+        "operation": "set",
+        "ticks": -123456
+      },
+      "request_id": 15
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 16",
+    "valid": true,
+    "data": {
+      "method": "game_time_operation",
+      "params": {
+        "operation": "pause"
+      },
+      "request_id": 16
+    }
+  },
+  {
+    "schema": "request",
+    "name": "request 17",
+    "valid": true,
+    "data": {
+      "method": "game_time_operation",
+      "params": {
+        "operation": "resume"
+      },
+      "request_id": 17
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "request_id": 1
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "game_name": "",
+        "category_name": "",
+        "offset_ticks": -100,
+        "file_path": null,
+        "layout_path": null,
+        "metadata": null,
+        "comparisons": [],
+        "segments": []
+      },
+      "session_id": 123,
+      "request_id": 2
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "game_name": "Example Game",
+        "category_name": "Any%",
+        "offset_ticks": -98765,
+        "file_path": "C:/runs/example.lss",
+        "layout_path": null,
+        "metadata": {
+          "run_id": "run-123",
+          "platform_name": "PC",
+          "region_name": "US",
+          "uses_emulator": false,
+          "variables": {
+            "character": "Hero"
+          }
+        },
+        "comparisons": [
+          "Personal Best"
+        ],
+        "segments": [
+          {
+            "index": 0,
+            "name": "Opening",
+            "comparisons": [
+              {
+                "name": "Personal Best",
+                "time": {
+                  "real_time_ticks": 1234,
+                  "game_time_ticks": null
+                }
+              }
+            ],
+            "best_segment_time": {
+              "real_time_ticks": -100,
+              "game_time_ticks": 500
+            }
+          }
+        ]
+      },
+      "session_id": 123,
+      "request_id": 8
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "game_icon": null,
+        "segment_icons": []
+      },
+      "session_id": 123,
+      "request_id": 18
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "game_icon": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO\u002B/b2sAAAAASUVORK5CYII=",
+        "segment_icons": [
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO\u002B/b2sAAAAASUVORK5CYII=",
+          null
+        ]
+      },
+      "session_id": 123,
+      "request_id": 19
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "attempt_count": 4,
+        "segments": [
+          {
+            "index": 0,
+            "split_time": {
+              "real_time_ticks": null,
+              "game_time_ticks": null
+            },
+            "custom_variables": {}
+          }
+        ]
+      },
+      "session_id": 123,
+      "request_id": 3
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "current_timing_method": "game_time",
+        "current_comparison": "Personal Best",
+        "custom_variables": {}
+      },
+      "session_id": 123,
+      "request_id": 4
+    }
+  },
+  {
+    "schema": "response",
+    "name": "Success\u00601",
+    "valid": true,
+    "data": {
+      "result": {
+        "completed_count": 2
+      },
+      "session_id": 123,
+      "request_id": 5
+    }
+  },
+  {
+    "schema": "response",
+    "name": "ControlSuccessResponse",
+    "valid": true,
+    "data": {
+      "result": null,
+      "session_id": 123,
+      "request_id": 6
+    }
+  },
+  {
+    "schema": "response",
+    "name": "ErrorResponse",
+    "valid": true,
+    "data": {
+      "error": {
+        "code": "operation_failed",
+        "message": "Operation failed."
+      },
+      "session_id": 123,
+      "request_id": 7
+    }
+  },
+  {
+    "schema": "event",
+    "name": "TimerEvent",
+    "valid": true,
+    "data": {
+      "type": "timer_started",
+      "timer_state": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "event_sequence": 1
+    }
+  },
+  {
+    "schema": "event",
+    "name": "TimerEvent",
+    "valid": true,
+    "data": {
+      "type": "timer_split",
+      "timer_state": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "event_sequence": 2
+    }
+  },
+  {
+    "schema": "event",
+    "name": "TimerEvent",
+    "valid": true,
+    "data": {
+      "type": "timer_skipped",
+      "timer_state": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "event_sequence": 3
+    }
+  },
+  {
+    "schema": "event",
+    "name": "TimerEvent",
+    "valid": true,
+    "data": {
+      "type": "timer_undo",
+      "timer_state": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "event_sequence": 4
+    }
+  },
+  {
+    "schema": "event",
+    "name": "ResetEvent",
+    "valid": true,
+    "data": {
+      "type": "timer_reset",
+      "timer_state": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "event_sequence": 5
+    }
+  },
+  {
+    "schema": "event",
+    "name": "TimerEvent",
+    "valid": true,
+    "data": {
+      "type": "timer_phase_changed",
+      "timer_state": {
+        "phase": "running",
+        "split_index": 2,
+        "real_time_ticks": 123456,
+        "game_time_ticks": null,
+        "is_game_time_initialized": false,
+        "is_game_time_paused": false
+      },
+      "session_id": 123,
+      "event_sequence": 6
+    }
+  },
+  {
+    "schema": "event",
+    "name": "ChangedEvent",
+    "valid": true,
+    "data": {
+      "type": "run_changed",
+      "timer_state": null,
+      "session_id": 123,
+      "event_sequence": 7
+    }
+  },
+  {
+    "schema": "event",
+    "name": "ChangedEvent",
+    "valid": true,
+    "data": {
+      "type": "context_changed",
+      "timer_state": null,
+      "session_id": 123,
+      "event_sequence": 8
+    }
+  },
+  {
+    "schema": "event",
+    "name": "ResetEvent with null timer state",
+    "valid": true,
+    "data": {
+      "type": "timer_reset",
+      "timer_state": null,
+      "session_id": 123,
+      "event_sequence": 9
+    }
+  }
+]

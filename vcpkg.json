@@ -1,0 +1,21 @@
+{
+  "name": "livesplit-bridge-client",
+  "version-semver": "0.1.0",
+  "description": "C++23 client library for the LiveSplit.Bridge JSON protocol v4",
+  "homepage": "https://github.com/Nanahuse/livesplit-bridge-client-cpp",
+  "license": "MIT",
+  "builtin-baseline": "0c2a9ace1964b818b15f7ae50ba1c42404918a7b",
+  "dependencies": [
+    "boost-asio",
+    "boost-beast",
+    "nlohmann-json"
+  ],
+  "features": {
+    "tests": {
+      "description": "Build the CTest suite",
+      "dependencies": [
+        "catch2"
+      ]
+    }
+  }
+}
