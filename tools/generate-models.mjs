@@ -41,7 +41,10 @@ function readJson(file) {
 }
 
 function sha256(file) {
-  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  // Git may check out text files with CRLF on Windows. Hash and compare the
+  // canonical LF form so the pinned official schemas remain verifiable.
+  const text = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+  return crypto.createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 const protocolSource = readJson(path.join(root, "tools", "protocol-source.json"));
@@ -699,7 +702,7 @@ if (check) {
   } catch {
     fail(`${path.relative(root, outputPath)} does not exist`);
   }
-  if (existing !== generated) {
+  if (existing.replace(/\r\n/g, "\n") !== generated) {
     fail(`${path.relative(root, outputPath)} is out of date; run node tools/generate-models.mjs`);
   }
   console.log("protocol models are up to date");
